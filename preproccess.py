@@ -10,12 +10,16 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 
 # XXX: Moneyness Bounds inclusive
-LM = 0.9
-UM = 1.1
+# This includes ITM, ATM and OTM options as specified by the paper doi: 10.1016/j.irfa.2024.103406
+LM = 0.8
+UM = 1.21
 MSTEP = 0.00333
 
-# XXX: Days to expiration
-TAU = 14
+# XXX: Days to expiration 
+# We will look at short term options which are classified as less than 90 days to expiration
+# according to the paper doi: 10.1016/j.irfa.2024.103406
+LT = 14 
+UT = 90 
 TSTEP = 5
 DAYS = 365
 
@@ -34,7 +38,7 @@ def num_to_date(num, dd='./figs'):
 
 def save_data_to_npy(data, dd='./figs'):
     for k in data.keys():
-        np.save('./figs/%s.npy', data[k])
+        np.save('./figs/%s.npy' % (k), data[k])
 
 def preprocess_ivs_df(dfs: dict):
     toret = dict()
@@ -50,10 +54,8 @@ def preprocess_ivs_df(dfs: dict):
         df['Expiration'] = pd.to_datetime(df['Expiration'])
         df['DataDate'] = pd.to_datetime(df['DataDate'])
         df['tau'] = (df['Expiration'] - df['DataDate']).dt.days
-        # XXX: Only those that are +- 1 days from the target tau 
-        # df = df[(df['tau'] >= LT) & (df['tau'] <= UT)]
-        df = df[((df['tau'] >= TAU-14) & (df['tau'] <= TAU+14))]
-        # df = df[(df['tau'] == TAU)]
+        # XXX: only those that meet the lower and upper bounds of days to expiration 
+        df = df[(df['tau'] >= LT) & (df['tau'] <= UT)]
         df['tau'] = df['tau']/DAYS
         df['m2'] = df['m']**2
         # df['tau2'] = df['tau']**2
@@ -105,12 +107,12 @@ def build_grid_and_images(df):
                                        'm': grid[k]['m']})
         iv_line[k]['IV'] = iv_line[k]['IV'].clip(0.01, None)
 
-    plt.figure(figsize=(10, 10))
-    for k in iv_line.keys():
-        plt.scatter(df[k]['m'], df[k]['IV'], label=k+'-actual')
-        plt.plot(iv_line[k]['m'], iv_line[k]['IV'], label=k+'-smooth') 
-        plt.legend()
-        plt.show()
+    # plt.figure(figsize=(10, 10))
+    # for k in iv_line.keys():
+    #     plt.scatter(df[k]['m'], df[k]['IV'], label=k+'-actual')
+    #     plt.plot(iv_line[k]['m'], iv_line[k]['IV'], label=k+'-smooth') 
+    #     plt.legend()
+    #     plt.show()
     
     # XXX: Plot the heatmap
     save_data_to_npy(iv_line)
@@ -144,12 +146,12 @@ def main(mdir, years, months, instrument, dfs: dict):
 
 def excel_to_images():
     dir = '../HistoricalOptionsData/'
-    # years = [str(i) for i in range(2011, 2024)]
-    years = [2011]
-    # months = ['January', 'February',  'March', 'April', 'May', 'June', 'July',
-    #           'August', 'September', 'October', 'November', 'December'
-    #           ]
-    months = ['January']
+    years = [str(i) for i in range(2002, 2015)]
+    # years = [2002]
+    months = ['January', 'February',  'March', 'April', 'May', 'June', 'July',
+              'August', 'September', 'October', 'November', 'December'
+              ]
+    # months = ['April']
     instrument = ["SPX"]
     dfs = dict()
     # XXX: The dictionary of all the dataframes with the requires
