@@ -10,6 +10,7 @@ from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
 from sklearn.multioutput import MultiOutputRegressor
+import pickle
 
 
 # XXX: Moneyness Bounds inclusive
@@ -360,11 +361,18 @@ def regression_predict(dataDir, model="Ridge", TSTEPS=10, data = None, term=14):
     print("MAPE mean: ", np.mean(mape), "MAPE std: ", np.std(mape))
     print("R2 score mean: ", np.mean(r2), "R2 std: ", np.std(r2))
 
-    print(reg.coef_.min(), reg.coef_.max())
+    # XXX: Save the stats to a csv file
+    if not os.path.exists('./reg_models/metrics'):
+        os.makedirs('./reg_models/metrics')
+
+    with open('./reg_models/metrics/metrics_model_%s_ts_%s_term_%s_fig.csv' % (treg, TSTEPS, term), 'w') as f:
+        f.write("MSE, MAPE, R2, MSEstd, MAPEstd, R2std\n")
+        f.write("%s, %s, %s, %s, %s, %s\n" % (np.mean(mse), np.mean(mape), np.mean(r2), np.std(mse), np.std(mape), np.std(r2)))
 
     import pickle
     with open('./reg_models/model_%s_ts_%s_term_%s_figs.pkl' % (treg, TSTEPS, term), 'wb') as f:
         pickle.dump(reg, f)
+
 
     # plot_predicted_outputs_reg(valY, vOutY)
     return (np.mean(mse), np.mean(mape), np.mean(r2))
@@ -407,26 +415,84 @@ def run_ml(models = ['conv', 'lstm'], TSTEPS = [5, 10, 20], terms = [31]):
                 model = build_keras_model(model_name, data[0].shape)
                 model = keras_model_fit(model, *data, 32, model_name, tstep, term)
 
-def run_regression(models = [], TSTEPS = [2, 5, 10, 20], terms=[31]):
+def run_regression(models = [], TSTEPS = [5, 10, 20], terms=[31]):
     # Could make this whole process faster by loading the data once and then passing it to the functions
     # Dict to store the results
-    results = [] 
     for term in terms:
         for tstep in TSTEPS:
-            result = dict()    
             print("TSTEPS: ", tstep)
             data = load_train_test_split(TSTEPS=tstep, term=term)
             for model in models:
-                result[str(tstep)] = (regression_predict("./data/figs/", model=model, TSTEPS=tstep, data=data, term=term))
-            results.append(result)
+                regression_predict("./data/figs/", model=model, TSTEPS=tstep, data=data, term=term)
 
-    for result in results:
-        plot_grouped_bar(result)
+        # for result in results:
+        #     plot_grouped_bar(result)
+
+def run_point(dd='./data/figs', model='Ridge', TSTEPS=10, term=31):
+    # XXX: We will need to do steps 5, 10 and 20
+    tX, tY, vX, vY = load_train_test_split(TSTEPS=TSTEPS, term=term)
+    tX = tX.reshape(tX.shape[:-1])
+    vX = vX.reshape(vX.shape[:-1])
+    # tX = np.append(tX, vX, axis=0)
+    # tY = np.append(tY, vY, axis=0)
+    # print('tX, tY: ', tX.shape, tY.shape)
+
+    # XXX: Validation set
+    # print('vX, vY:', vX.shape, vY.shape)
+
+    # Fill in NaN's... required for non-parametric regression
+    # if dd == './gfigs':
+    #     clean_data(tX, tY)
+    #     clean_data(vX, vY)
+
+    # XXX: Now go through the MS and TS
+    mms = np.arange(LM, UM+MSTEP, MSTEP)
+
+    count = 0
+    for i, s in enumerate(mms):
+        if count % 50 == 0:
+            print('Done: ', count)
+        count += 1
+        # XXX: Make the vector for training
+        k = np.array([s]*tX.shape[0]).reshape(tX.shape[0], 1)
+        train_vec = np.append(tX[:, :, i], k, axis=1)
+        # print(train_vec.shape, tY[:, i, j].shape)
+
+        # XXX: Fit the ridge model
+        treg = 'ridge'
+        reg = Ridge(fit_intercept=True, alpha=1)
+        reg.fit(train_vec, tY[:, i])
+        # print('Train set R2: ', reg.score(train_vec, tY[:, i, j]))
+
+        # XXX: Predict (Validation)
+        # print(vX.shape, vY.shape)
+        # k = np.array([s, t]*vX.shape[0]).reshape(vX.shape[0], 2)
+        # val_vec = np.append(vX[:, :, i, j], k, axis=1)
+        # vYP = reg.predict(val_vec)
+        # vvY = vY[:, i, j]
+        # r2sc = r2_score(vvY, vYP, multioutput='raw_values')
+        # print('Test R2:', np.mean(r2sc))
+
+        # XXX: Save the model
+        import pickle
+        with open('./point_models/pm_%s_ts_%s_p_%s_term_%s.pkl' %
+                    (treg, TSTEPS, s, term), 'wb') as f:
+            pickle.dump(reg, f)
+
+def load_model(model_name, TSTEPS, term):
+    if model_name == 'conv' or model_name == 'lstm':
+        return tf.keras.models.load_model('./ml_models/model_%s_ts_%s_term_%s_fig.keras' % (model_name, TSTEPS, term))
+    else:
+        with open('./reg_models/model_%s_ts_%s_term_%s_figs.pkl' % (model_name, TSTEPS, term), 'rb') as f:
+            return pickle.load(f)
 
 
 if(__name__=="__main__"):
+    TSTEPS = [5, 10, 20]
+    for tstep in TSTEPS:
+        run_point(TSTEPS=tstep)
 
     # TSTEPS = 5
     # data = load_train_test_split(TSTEPS=TSTEPS)
     # regression_predict(dataDir="./data/figs/", model="ElasticNet", TSTEPS=TSTEPS, data=data)
-    run_regression(["Lasso", "ElasticNet", "Ridge", "RandomForest", "XGBoost", "OLS"], TSTEPS=[2, 5, 10, 20])
+    # run_regression(["Lasso", "ElasticNet", "Ridge", "RandomForest", "XGBoost", "OLS"], TSTEPS=[5, 10, 20], terms=[31])
