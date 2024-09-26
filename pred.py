@@ -102,7 +102,7 @@ def load_train_test_split(NIMAGES1=4252, NIMAGES2=1000, TSTEPS=2, type='conv', t
     valX, valY, _ = load_data_for_keras(START=START, NUM_IMAGES=NIMAGES2, TSTEP=TSTEPS, term=term)
     valX = valX.reshape(valX.shape[0]//TSTEPS, TSTEPS, *valX.shape[1:])
 
-    if(type == 'lstm'):
+    if(type == 'lstm' or type == 'point'):
         trainX = trainX.reshape(*trainX.shape[0:3])
         trainY = trainY.reshape(*trainY.shape[0:2])
         valX = valX.reshape(*valX.shape[0:3])
@@ -430,9 +430,7 @@ def run_regression(models = [], TSTEPS = [5, 10, 20], terms=[31]):
 
 def run_point(dd='./data/figs', model='Ridge', TSTEPS=10, term=31):
     # XXX: We will need to do steps 5, 10 and 20
-    tX, tY, vX, vY = load_train_test_split(TSTEPS=TSTEPS, term=term)
-    tX = tX.reshape(tX.shape[:-1])
-    vX = vX.reshape(vX.shape[:-1])
+    tX, tY, vX, vY = load_train_test_split(TSTEPS=TSTEPS, term=term, type='point')
     # tX = np.append(tX, vX, axis=0)
     # tY = np.append(tY, vY, axis=0)
     # print('tX, tY: ', tX.shape, tY.shape)

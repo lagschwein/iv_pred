@@ -84,7 +84,7 @@ def load_train_test_split(NIMAGES1=4252, NIMAGES2=1000, TSTEPS=2, type='conv', t
     valX, valY, _ = load_data_for_keras(START=START, NUM_IMAGES=NIMAGES2, TSTEP=TSTEPS, term=term)
     valX = valX.reshape(valX.shape[0]//TSTEPS, TSTEPS, *valX.shape[1:])
 
-    if(type == 'lstm'):
+    if(type == 'lstm' or type == 'point'):
         trainX = trainX.reshape(*trainX.shape[0:3])
         trainY = trainY.reshape(*trainY.shape[0:2])
         valX = valX.reshape(*valX.shape[0:3])
@@ -92,21 +92,26 @@ def load_train_test_split(NIMAGES1=4252, NIMAGES2=1000, TSTEPS=2, type='conv', t
     
     return trainX, trainY, valX, valY
 
-def load_model(model='ridge', lag=2, term=31):
+def load_model(model='ridge', lag=2, term=31, point=None):
     if model == 'conv' or model == 'lstm':
-        return tf.keras.models.load_model('./ml_models/model_%s_ts_%d_term_%s.h5' % (model, lag, term))
+        return tf.keras.models.load_model('./ml_models/model_%s_ts_%s_term_%s.keras' % (model, lag, term))
+    elif model == 'pmodel':
+        if point is not None:
+            return pickle.load(open('./point_models/pm_ridge_ts_%s_p_%s_term_%s.pkl' % (lag, point, term), 'rb'))
+        pass
     else:
         return pickle.load(open('./reg_models/model_%s_ts_%d_term_%s_figs.pkl' % (model, lag, term), 'rb'))
 
 def plot_feature_hmap(vv, X, name):
     print(name)
     fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+    ax = fig.add_subplot(111)
     xs = X
     for i in range(vv.shape[0]):
         im = ax.plot(xs, vv[i],
-                             antialiased=False, linewidth=0)
+                             antialiased=False, linewidth=2)
     ax.set_xlabel('Moneyness')
+    ax.legend(range(vv.shape[0]))
     plt.savefig(name, bbox_inches='tight')
     # plt.show()
 
@@ -177,12 +182,26 @@ def plot_metrics():
     # Plot the metrics
     pass
 
-def predict_model(model_name, model, valX):
+def predict_model(model_name, model, valX, valY, lag=None, term=None):
     if model_name == 'conv' or model_name == 'lstm':
         if model_name == 'lstm':
             valX = valX.reshape(*valX.shape[0:3])
         print(model.summary())
         return model(valX, training=False).numpy()
+    elif model_name == 'pmodel':
+        # XXX: The output vector
+        out = np.array([0.0]*(valY.shape[0]*valY.shape[1]))
+        out = out.reshape(*valY.shape)
+        # XXX: Now go through the MS and TS
+        mms = np.arange(pred.LM, pred.UM+pred.MSTEP, pred.MSTEP)
+        for i, s in enumerate(mms):
+            # XXX: Load the model
+            model = load_model('pmodel', lag, term, s)
+            # XXX: Now make the prediction
+            k = np.array([s]*valX.shape[0]).reshape(valX.shape[0], 1)
+            val_vec = np.append(valX[:, :, i], k, axis=1)
+            out[:, i] = model.predict(val_vec).reshape(valX.shape[0])
+        return out
     else:
         # For regression models input is flattened
         return model.predict(valX.reshape(valX.shape[0], -1))
@@ -215,8 +234,8 @@ def run_dm_test(models=["ridge", "rf", "ols", "lasso", "enet", "xgb", "lstm"], T
                     model1 = load_model(models[i], tstep, term)
                     model2 = load_model(models[j], tstep, term)
 
-                    Y1 = predict_model(models[i], model1, data[2])
-                    Y2 = predict_model(models[j], model2, data[2])
+                    Y1 = predict_model(models[i], model1, data[2], data[3], tstep, term)
+                    Y2 = predict_model(models[j], model2, data[2], data[3], tstep, term)
 
                     # Reshape the outputs so that they have the same shape
                     Y = Y.reshape(Y.shape[0], Y.shape[1])
@@ -252,8 +271,14 @@ def main(model_name, TSTEP, term, dd='./data/figs', NIMAGES=1000, plot=True, get
     # XXX: Load the data
     X, Y, dates = load_data_for_keras(START=START, NUM_IMAGES=NIMAGES, TSTEP=TSTEP, term=term)
 
+    X = X.reshape(X.shape[0]//TSTEP, TSTEP, *X.shape[1:])
+
+    if(model_name == 'lstm' or model_name == 'pmodel'):
+        X = X.reshape(*X.shape[0:3])
+        Y = Y.reshape(*Y.shape[0:2])
+
     # XXX: Predict the IV skew
-    Ypred = predict_model(model_name, model, X)
+    Ypred = predict_model(model_name, model, X, Y, TSTEP, term)
 
     # XXX: If the model is a regression model, plot the feature importance
     if get_features and model_name != 'conv' and model_name != 'lstm' and model_name != 'pmodel':
@@ -261,7 +286,7 @@ def main(model_name, TSTEP, term, dd='./data/figs', NIMAGES=1000, plot=True, get
         MS = Y.shape[1]
         MONEYNESS = [0, MS//2, MS-1]
 
-        if model == 'ridge':
+        if model_name == 'ridge':
             ws = model.coef_.reshape(MS, TSTEP, MS)
             # XXX: Just get the top 10 results
             X = np.arange(pred.LM, pred.UM+pred.MSTEP, pred.MSTEP)
@@ -303,29 +328,31 @@ def model_surf_v_point_model():
     import pred
     TTS = [5, 10, 20]
     # XXX: Only Ridge model(s)
-    for dd in ['./figs', './gfigs']:
-        for t in TTS:
-            _, _, r2, y, yp = main(plot=False, TSTEPS=t, model="ridge")
-            _, _, r2k, yk, ypk = main(plot=False, TSTEPS=t, model="pmodel")
-            assert (np.array_equal(y, yk))
-            # XXX: Now we can do Diebold mariano test
-            try:
-                dstat, pval = dmtest.dm_test(y, yp, ypk)
-            except dmtest.ZeroVarianceException:
-                dstat, pval = np.nan, np.nan
-                # XXX: save the dstat and pvals
-            with open('%s_pmodel_v_model_%s.csv' %
-                      (t, dd.split('/')[1]), 'w') as f:
-                f.write('#ridge, pmodel\n')
-                f.write('dstat,pval\n')
-                f.write('%s,%s\n' % (dstat, pval))
-                f.write('r2ridge,r2pmodel\n')
-                f.write('%s,%s' % (np.mean(r2), np.mean(r2k)))
+    for t in TTS:
+        _, _, r2, y, yp = main(plot=False, TSTEP=t,term=31, model_name="ridge")
+        _, _, r2k, yk, ypk = main(plot=False, TSTEP=t,term=31, model_name="pmodel")
+        print(ypk.shape, yp.shape)
+        assert (np.array_equal(y, yk))
+        # XXX: Now we can do Diebold mariano test
+        try:
+            dstat, pval = dmtest.dm_test(y, yp, ypk)
+        except dmtest.ZeroVarianceException:
+            dstat, pval = np.nan, np.nan
+            # XXX: save the dstat and pvals
+        with open('./%s_pmodel_v_model_fig.csv' %
+                    (t), 'w') as f:
+            f.write('#ridge, pmodel\n')
+            f.write('dstat,pval\n')
+            f.write('%s,%s\n' % (dstat, pval))
+            f.write('r2ridge,r2pmodel\n')
+            f.write('%s,%s' % (np.mean(r2), np.mean(r2k)))
 
 
 if __name__ == '__main__':
-    lag = 10
-    model = load_model(model='enet', lag=lag)
-    plot_feature_importance(model.coef_, lag)
+    # main('ridge', 5, 31, plot=True, get_features=True)
+    # lag = 10
+    # model = load_model(model='enet', lag=lag)
+    # plot_feature_importance(model.coef_, lag)
+    model_surf_v_point_model()
 
     # plot_metrics()
